@@ -53,7 +53,7 @@ def format_safety_data(row):
 # 2. Folosește mai multe date (Măcar 10.000 sau tot setul)
 print("Incarcare dataset PKU-SafeRLHF extins...")
 # Dacă ai memorie RAM, scoate slicing-ul [:10000] și lasă tot.
-raw_dataset = load_dataset("PKU-Alignment/PKU-SafeRLHF-30K", split="train[:10000]")
+raw_dataset = load_dataset("PKU-Alignment/PKU-SafeRLHF-30K", split="train[:26000]")
 
 dataset = raw_dataset.filter(filter_ambiguous_data)
 
