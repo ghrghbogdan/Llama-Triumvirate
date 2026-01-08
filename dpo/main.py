@@ -24,7 +24,7 @@ model = FastLanguageModel.get_peft_model(
     target_modules=['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj'],
     lora_alpha=256,
     lora_dropout=0.05,
-    bias="none",
+    bias="none",  
     use_gradient_checkpointing="unsloth",
     random_state=42,
 )
