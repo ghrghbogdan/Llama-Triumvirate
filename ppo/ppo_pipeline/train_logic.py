@@ -8,15 +8,23 @@ from typing import List, Tuple
 
 def generalized_advantage_estimation(rewards: List[float], values: List[float], gamma: float, lam: float) -> Tuple[List[float], List[float]]:
     # based on temporal difference error (TD Error)
+    # due to inability to calculate the difference between real state value 
+    # and mean value of the state
+    # so in other words gae tells us if the action was better or not than the mean
     
     advantages = []
     gae = 0
     
     for t in reversed(range(len(rewards))):
         # delta_t = r_t + gamma*V(s_t+1) - V(s_t)
-        # here we add to the reward calculated in advance a scaled difference between 
-        # the critcs expectation about future prediction and the ground trueth
+        # "i received r_t reward and i am in state s_t+1. together values r_t+lambda*V(s_t+1). 
+        # how accurate i was when i thought that current state values V(s_t)"
         delta = rewards[t] + gamma * values[t + 1] - values[t]
+
+        # the scop of the lambda parameter 
+        # 0 -> advantage depends only on the anterior value of the critic (which is wrong in the begining)
+        # 1 -> advantage is the sum of all rewards, which means that if we have 90 good tokens and 10 bad ones
+        #      the model will receive a noisy feedback, understanding that those 90 good tokes are bad as well 
         gae = delta + gamma * lam * gae
         advantages.insert(0, gae)
     
@@ -53,7 +61,6 @@ def train(
     save_steps: int = 50
 ) -> float:
     
-    # L_total = L_policy + c1*L_value - c2*L_entropy
     
     if checkpoint_dir:
         os.makedirs(checkpoint_dir, exist_ok=True)
@@ -86,9 +93,7 @@ def train(
             prompt_ids = prompt_inputs.input_ids
             prompt_length = prompt_ids.shape[1]
 
-            try:
-                # print(f"\n[Step {step}/{num_batches}] Generating...", end=" ", flush=True)
-                
+            try:                
                 model.eval()
                 with torch.no_grad():
                     gen_output = model.generate(
@@ -99,14 +104,9 @@ def train(
                         top_p=0.9,
                         pad_token_id=tokenizer.pad_token_id
                     )
-                    # print("Done", flush=True)
 
-                    # print(f"  Rewards...", end=" ", flush=True)
                     gen_text = tokenizer.batch_decode(gen_output, skip_special_tokens=True)
                     
-                    # Printam textul pentru debug vizual
-                    # print(f"\n  [Gen Text]: {gen_text[0]}")
-
                     rewards = reward_pipe(gen_text)
                     if not isinstance(rewards, list):
                         rewards = [rewards]
@@ -117,7 +117,6 @@ def train(
                     if rewards_tensor.shape[0] > 1:
                         rewards_tensor = (rewards_tensor - rewards_tensor.mean()) / (rewards_tensor.std() + 1e-8)
                     
-                    # print(f"Done (Raw: {mean_reward:.4f})", flush=True)
 
                     attention_mask = (gen_output != tokenizer.pad_token_id).long()
                     shift_labels = gen_output[:, 1:].contiguous()
@@ -125,13 +124,10 @@ def train(
                     seq_len = gen_output.shape[1]
                     generated_length = seq_len - prompt_length
 
-                    # print(f"  Ref model...", end=" ", flush=True)
                     ref_logits, _ = model(gen_output, attention_mask, use_ref_model=True)
                     ref_shift_logits = ref_logits[:, :-1, :].contiguous()
                     ref_log_probs = get_log_probs(ref_shift_logits, shift_labels)
-                    # print("Done", flush=True)
 
-                    # print(f"  Old policy...", end=" ", flush=True)
                     old_logits, old_values = model(gen_output, attention_mask, use_ref_model=False)
                     old_shift_logits = old_logits[:, :-1, :].contiguous()
                     old_log_probs = get_log_probs(old_shift_logits, shift_labels)
@@ -167,7 +163,7 @@ def train(
                         for t in range(generated_start_idx, seq_len - 1):
                             token_rewards[t] += reward_per_token
                         
-                        # gae measures how good the action we just took was, compared to how good we thought it was
+                        # gae measures how good the action we just took was, compared to how good we thought it was (mean)
                         advantages, returns = generalized_advantage_estimation(token_rewards, seq_values_list, gamma, lam)
                         
                         all_advantages.append(torch.tensor(advantages, device=device, dtype=torch.float32))
@@ -182,7 +178,6 @@ def train(
                     advantages_tensor = torch.clamp(advantages_tensor, -adv_clip_range, adv_clip_range)
 
                 model.train()
-                # print(f"  Training...", end=" ", flush=True)
                 
                 logits, values = model(gen_output, attention_mask, use_ref_model=False)
                 
@@ -196,7 +191,9 @@ def train(
                 surr1 = ratio * advantages_tensor
                 surr2 = torch.clamp(ratio, 1.0 - clip_range, 1.0 + clip_range) * advantages_tensor
                 policy_loss = -torch.min(surr1, surr2).mean()
-                
+
+                # L_total = L_policy + c*L_value
+
                 value_loss = F.mse_loss(values[:, :-1].float(), returns_tensor.float())
                 value_loss = torch.clamp(value_loss, 0, 100)
                 
@@ -237,10 +234,8 @@ def train(
                     
                     optimizer.zero_grad()
                     
-                    # print("Done", flush=True)
                 else:
                     grad_norm = 0.0
-                    # print("Accumulated", flush=True)
 
                 step_loss = float(loss.detach() * grad_accum_steps)
                 step_policy_loss = float(policy_loss.detach())
@@ -372,6 +367,6 @@ def train(
             except Exception as e:
                 print(f"Error plotting at epoch end: {e}")
 
-            print(f"Epoch checkpoint saved successfully!\n")
+            print(f"[INFO] Epoch checkpoint saved successfully!\n")
 
     return avg_epoch_loss
