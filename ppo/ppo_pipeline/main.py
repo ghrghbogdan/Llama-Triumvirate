@@ -11,6 +11,9 @@ from train_logic import train
 
 
 def main():
+    LOAD_FROM_CHECKPOINT = True
+    CHECKPOINT_PATH = "./checkpoints/checkpoint_in_progress"
+    
     model_name = "huihui-ai/Llama-3.2-3B-Instruct-abliterated"
     print(f"\n[INFO] Model: {model_name}")
 
@@ -40,20 +43,34 @@ def main():
     print("\n[INFO] Initializing PPO model")
     ppo_llama_model = PPOLlama3B(model_name, bnb_config, lora_config)
 
+    if LOAD_FROM_CHECKPOINT:
+        import os
+        if os.path.exists(CHECKPOINT_PATH):
+            print(f"\n[INFO] Loading checkpoint from: {CHECKPOINT_PATH}")
+            
+            ppo_llama_model.base_model.load_adapter(CHECKPOINT_PATH, adapter_name="default")
+            print(f"[INFO] Loaded LoRA adapter weights")
+            
+            value_head_path = os.path.join(CHECKPOINT_PATH, "value_head.pt")
+            if os.path.exists(value_head_path):
+                value_head_state = torch.load(value_head_path, map_location=ppo_llama_model.base_model.device)
+                ppo_llama_model.value_head.load_state_dict(value_head_state)
+                print(f"[INFO] Loaded value head weights")
+            else:
+                print(f"[WARN] value_head.pt not found in checkpoint, starting with fresh value head")
+            
+            print(f"[INFO] Checkpoint loaded successfully!")
+        else:
+            print(f"[WARN] Checkpoint path does not exist: {CHECKPOINT_PATH}")
+            print(f"[WARN] Starting training from scratch")
+
     optimizer = AdamW(ppo_llama_model.parameters(), lr=1.41e-5)
 
     print("\n[INFO] Loading dataset")
     dataset = load_from_disk("/home/sebi/Llama-Triumvirate/ppo/dataset/harmful_dataset")
-    # dataset["train"] = dataset["train"].select(range(1000))
     print(f"[INFO] Training samples: {len(dataset['train'])}")
 
     print("\n[INFO] Creating dataloader")
-    # dataloader = DataLoader(
-    #     dataset["train"],
-    #     batch_size=batch_size,
-    #     shuffle=True,
-    #     collate_fn=lambda batch: [item["chosen"].split("Assistant:")[0] + "Assistant:" for item in batch]
-    # )
     dataloader = DataLoader(
         dataset["train"],
         batch_size=batch_size,
@@ -74,7 +91,7 @@ def main():
         tokenizer=tokenizer,
         device=ppo_llama_model.base_model.device,
         grad_accum_steps=10,
-        epochs=4,
+        epochs=1,
         kl_coef=0.02,
         value_loss_coef=0.1
     )
